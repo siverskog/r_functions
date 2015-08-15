@@ -10,7 +10,9 @@
 ##### CRITICAL VALUE FOR ADF-TEST ######################################################
 ########################################################################################
 
-.adf.crit <- function(size, sign, type) {
+.adf.pval <- function(stat, size, type) {
+  
+  ### SIMULATED CRITICAL VALUES FOR DF-STATISTIC ###
   
   adf.array <- array(NA, c(6,3,3), dimnames = list("size" = c(25, 50, 100, 250, 500, Inf),
                                                    "sign" = c(0.01, 0.05, 0.10),
@@ -28,14 +30,33 @@
                              "0.05" = c(-1.95, -1.95, -1.95, -1.95, -1.95, -1.95),
                              "0.10" = c(-1.60, -1.61, -1.61, -1.62, -1.62, -1.62)))
   
+  ### INTERPOLATE CRITICAL VALUES FOR SAMPLE SIZE ###
   
-  if(size>500) {
-    return(adf.array[5,as.character(sign),type])
+    if(size>500) {
+    tmp <- adf.array[6,,type]
   } else if(size<25) {
-    return(adf.array[1,as.character(sign),type])
+    tmp <- adf.array[1,,type]
   } else {
-    return(approx(x = c(25,50,100,250,500), y = adf.array[-6,as.character(sign),type], xout = size)$y)
+    
+    func <- function(x) {
+      approx(names(x[-6]), x[-6], xout = size)$y
+    }
+    
+    tmp <- apply(adf.array[,,type], 2, func)
+    
   }
+  
+  ### INTERPOLATE P-VALUE BASED ON DF-STATISTIC ###
+  
+  if(abs(stat)>=abs(tmp[1])) {
+    p <- 0.01
+  } else if(abs(stat)<=abs(tmp[3])) {
+    p <- 0.5
+  } else {
+    p <- exp(approx(tmp, log(as.numeric(names(tmp))), xout = stat)$y)
+  }
+  
+  return(p)
   
 }
 
@@ -141,8 +162,14 @@
 ##### ADD STARS FOR SIGNIFICANCE #######################################################
 ########################################################################################
 
-.significance <- function(p, stat, only.stars = FALSE) {
+sign <- function(x, digits = 2, only.stars = FALSE) {
   
+  if(class(x)!="diag.test") {warning("x must be of class 'diag.test'")}
+  stat <- x$stat
+  p <- x$p
+  
+  stat <- format(round(stat, digits), nsmall = digits) # FORMAT THE NUMBER OF DIGITS
+  if(x$test=="adf") { stat <- paste(stat, "(", x$lag, ")", sep = "") }
   if(only.stars){ stat <- "" }
   
   if (p<=0.01) {
@@ -154,6 +181,8 @@
   } else {
     result <- paste(stat, sep = "")
   }
+  
+  names(result) <- x$name
   
   return(result)
   
@@ -169,14 +198,13 @@
 #' @param lag Scalar setting the lag-length. If \code{optim = TRUE} \code{lag} sets the maximum lag length.
 #' @param type Sets constant and trend in the regression. Possible choices are \code{c("ct", "c", "nc")}.
 #' @param optim Logical indicating whether the Schwarz Information Criterion should be used to select the optimum lag-length.
-#' @param print.lag Logical indicating whether lag-length should be returned
-#' @param only.stars Logical indicating whether test statistic should not be returned
-#' @param digits Scalar setting the number of digits to be returned.
 #' @return The Dickey-Fuller test statistic.
 #' @examples
 #' 
 
-adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, only.stars = FALSE, digits = 2) {
+adf.test <- function(x, lag = 10, type = "ct", optim = TRUE) {
+  
+  x <- na.exclude(x)
   
   if(optim) { # LOOPS OVER ALL POSSBLE LAG-LENGTHS
       
@@ -184,7 +212,7 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
       
       for(i in 0:lag) {
         tmp <- .adf.function(x, i, type)
-        z <- cbind(z, .sic(tmp)) # SAVES THE SIC
+        z <- c(z, .sic(tmp)) # SAVES THE SIC
         }
       
       lag <- which.min(z)-1 # SELECTS LAG BASED ON MINIMUM SIC
@@ -196,21 +224,13 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
   
   df <- summary(lm.fit)$coef[1,1]/summary(lm.fit)$coef[1,2] # DICKEY-FULLER TEST STATISTIC
   t <- length(resid(lm.fit)) # SAMPLE SIZE
-  sign <- c(0.01, 0.05, 0.1) # SIGNIFICANCE LEVELS
-  p <- 0.9
+
+  p <- .adf.pval(df, t, type)
   
-  for(i in seq_along(sign)) {
-    if(abs(df)>abs(.adf.crit(t, sign[i], type))) { # TEST AGAINST CRITICAL VALUES
-      p <- sign[i]
-      break()
-    }
-  }
+  test <- list(test = "adf", stat = df, p = p, type = type, lag = lag, name = paste("ADF", "(", type, ")", sep = ""))
+  class(test) <- "diag.test"
   
-  df <- format(round(df, digits), nsmall = digits) # FORMAT THE NUMBER OF DIGITS
-  if(print.lag) { df <- paste(df, "(", lag, ")", sep = "") }
-  df <- .significance(p, df, only.stars)
-  
-  return(df)
+  return(test)
   
 }
 
@@ -218,10 +238,13 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
 ##### SKEWNESS #########################################################################
 ########################################################################################
 
-.skew <- function(x) {
+.skew <- function(x, sample = TRUE) {
   
-  result <- mean((x-mean(x))^3)/sd(x)^3
-  return(result)
+  if(sample) {
+    return(mean((x-mean(x))^3)/sd(x)^3)}
+  else {
+    return( mean((x-mean(x))^3) / (sum((x-mean(x))^2)/length(x))^(3/2) )
+  }
   
 }
 
@@ -229,9 +252,14 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
 ##### KURTOSIS #########################################################################
 ########################################################################################
 
-.kurt <- function(x) {
+.kurt <- function(x, sample = TRUE) {
   
-  result <- mean((x-mean(x))^4)/sd(x)^4
+  if(sample) {
+    return(mean((x-mean(x))^4)/sd(x)^4)
+  } else {
+    return( mean((x-mean(x))^4) / (sum((x-mean(x))^2)/length(x))^2 )
+  }
+  
   return(result)
   
 }
@@ -240,13 +268,119 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
 ##### JARQUE-BERA TEST #################################################################
 ########################################################################################
 
-jb.test <- function(x, k = 0) {
+jb.test <- function(x, sample = TRUE) {
   
   x <- na.exclude(x)
-  s <- .skew(x)
-  c <- .kurt(x)
+  s <- .skew(x, sample)
+  k <- .kurt(x, sample)
   n <- length(x)
   
-  jb <- ((n-k+1)/6) * (s^2 + 0.25 * (c-3)^2)
-  return(jb)
+  jb <-  n * ( (s^2)/6 + ((k-3)^2)/24 )
+  p <- pchisq(jb, 2, lower.tail = F)
+  
+  test <- list(test = "jb", stat = jb, p = p, name = "JB")
+  class(test) <- "diag.test"
+  
+  return(test)
+  
 }
+
+########################################################################################
+##### LJUNG-BOX Q-TEST #################################################################
+########################################################################################
+
+q.test <- function(x, lag = 20, sq = FALSE) {
+  
+  x <- na.exclude(x)
+  
+  lm.fit <- lm(x ~ 1)
+  x <- lm.fit$residuals
+  if(sq){ x <- x^2 }
+  
+  n <- length(x)
+  rho <- as.vector(acf(x, lag.max = lag, plot = FALSE)$acf)[-1]
+  q <- n * (n + 2) * sum(rho^2 / (n-seq(1,lag)))
+  p <- pchisq(q, lag, lower.tail = FALSE)
+  
+  if(sq) {
+    test <- list(test = "q2", stat = q, p = p, name = paste("Q^2", "(", lag, ")", sep = "")) 
+  } else {
+    test <- list(test = "q", stat = q, p = p, name = paste("Q", "(", lag, ")", sep = ""))
+  }
+  
+  
+  class(test) <- "diag.test"
+  
+  return(test)
+  
+}
+
+########################################################################################
+##### ARCH-LM ##########################################################################
+########################################################################################
+# Modified from code by Bernard Pfaff
+
+arch.test <- function (x, lag = 20, demean = FALSE) {
+  x <- as.vector(x)
+  if(demean) x <- scale(x, center = TRUE, scale = FALSE)
+  lags <- lag + 1
+  mat <- embed(x^2, lags)
+  arch.lm <- summary(lm(mat[, 1] ~ mat[, -1]))
+  stat <- arch.lm$r.squared * length(resid(arch.lm))
+  df <- lags - 1
+  p <- pchisq(stat, df = df, lower.tail = FALSE)
+  
+  test <- list(test = "arch-lm", stat = stat, p = p, name = paste("ARCH", "(", lag, ")", sep = ""))
+  class(test) <- "diag.test"
+  
+  return(test)
+}
+
+########################################################################################
+##### DESCRIPTIVE STATISTICS ###########################################################
+########################################################################################
+
+desc.stat <- function(df, dec = 2, dlog = FALSE, obsperyear = 260, only.stars = TRUE) {
+  
+  result <- as.data.frame(matrix(NA, nrow = ncol(df), ncol = 9))
+  colnames(result) <- c("Obs", "Mean", "StdDev", "Skewness", "Kurtosis", "JB", "Q(20)", "Q-sq(20)", "ARCH(20)")
+  
+  for(i in 1:ncol(df)) {
+    
+    x <- as.numeric(na.exclude(df[,i]))
+    
+    if(length(x)>50) {
+      result[i,"Obs"] <- format(round(length(x), 0), nsmall = 0)
+      result[i,"Skewness"] <- format(round(.skew(x), dec), nsmall = dec)
+      result[i,"Kurtosis"] <- format(round(.kurt(x), dec), nsmall = dec)
+      
+      result[i,"JB"] <- sign(jb.test(x), digits = dec, only.stars = only.stars)
+      result[i,"Q(20)"] <- sign(q.test(x, lag = 20), digits = dec, only.stars = only.stars)
+      result[i,"Q-sq(20)"] <- sign(q.test(x, lag = 20, sq = TRUE), digits = dec, only.stars = only.stars)
+      result[i,"ARCH(20)"] <- sign(arch.test(x, lag = 20), digits = dec, only.stars = only.stars)
+    } else {
+      result[i,] <- rep(NA, ncol(result))
+      result[i,"Obs"] <- 0
+    }
+    
+    if(dlog) {
+      result[i,"Mean"] <- format(round(mean(x)*obsperyear*100, dec), nsmall = dec)
+      result[i,"StdDev"] <- format(round(sd(x)*sqrt(obsperyear)*100, dec), nsmall = dec)
+    } else {
+      result[i,"Mean"] <- format(round(mean(x), dec), nsmall = dec)
+      result[i,"StdDev"] <- format(round(sd(x), dec), nsmall = dec)
+    }
+    
+  }
+  
+  if(dlog) {
+    colnames(result)[colnames(result)=="Mean"] <- "Mean (%)"
+    colnames(result)[colnames(result)=="StdDev"] <- "StdDev (%)"
+  }
+  
+  rownames(result) <- colnames(df)
+  
+  return(result)
+  
+}
+
