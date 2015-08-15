@@ -2,8 +2,9 @@
 ##### DIAGNOSTICS TESTING ##############################################################
 ##### Jonathan Siverskog  ##############################################################
 ##### 2015-08-13          ##############################################################
-#####                     ##############################################################
-#####                     ##############################################################
+########################################################################################
+
+#source("https://raw.githubusercontent.com/siverskog/r_functions/master/diagnostics.R")
 
 ########################################################################################
 ##### CRITICAL VALUE FOR ADF-TEST ######################################################
@@ -33,7 +34,7 @@
   } else if(size<25) {
     return(adf.array[1,as.character(sign),type])
   } else {
-    return(approx(x = n, y = adf.array[-6,as.character(sign),type], xout = size)$y)
+    return(approx(x = c(25,50,100,250,500), y = adf.array[-6,as.character(sign),type], xout = size)$y)
   }
   
 }
@@ -137,25 +138,6 @@
 }
 
 ########################################################################################
-##### OPTIMAL LAG FOR ADF ##############################################################
-########################################################################################
-
-.adf.optim <- function(x, max = 10, type = "ct") {
-  
-  z <- NULL
-  
-  for(i in 0:max) {
-    
-    tmp <- .adf.function(x, i, type)
-    z <- cbind(z, .sic(tmp))
-    
-  }
-  
-  return(.adf.function(x, which.min(z)-1, type))
-  
-}
-
-########################################################################################
 ##### ADD STARS FOR SIGNIFICANCE #######################################################
 ########################################################################################
 
@@ -196,11 +178,21 @@
 
 adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, only.stars = FALSE, digits = 2) {
   
-  if(optim) {
-    lm.fit <- .adf.optim(x, lag, type)
-  } else {
+  if(optim) { # LOOPS OVER ALL POSSBLE LAG-LENGTHS
+      
+      z <- NULL
+      
+      for(i in 0:lag) {
+        tmp <- .adf.function(x, i, type)
+        z <- cbind(z, .sic(tmp)) # SAVES THE SIC
+        }
+      
+      lag <- which.min(z)-1 # SELECTS LAG BASED ON MINIMUM SIC
+      lm.fit <- .adf.function(x, lag, type)
+      
+    } else {
     lm.fit <- .adf.function(x, lag, type)
-  }
+    }
   
   df <- summary(lm.fit)$coef[1,1]/summary(lm.fit)$coef[1,2] # DICKEY-FULLER TEST STATISTIC
   t <- length(resid(lm.fit)) # SAMPLE SIZE
@@ -215,7 +207,7 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
   }
   
   df <- format(round(df, digits), nsmall = digits) # FORMAT THE NUMBER OF DIGITS
-  if(print.lag) { df <- paste(df, "(", length(x)-length(resid(lm.fit))-1, ")", sep = "") }
+  if(print.lag) { df <- paste(df, "(", lag, ")", sep = "") }
   df <- .significance(p, df, only.stars)
   
   return(df)
@@ -223,5 +215,38 @@ adf.test <- function(x, lag = 10, type = "ct", optim = TRUE, print.lag = TRUE, o
 }
 
 ########################################################################################
-##### ... ##############################################################################
+##### SKEWNESS #########################################################################
 ########################################################################################
+
+.skew <- function(x) {
+  
+  result <- mean((x-mean(x))^3)/sd(x)^3
+  return(result)
+  
+}
+
+########################################################################################
+##### KURTOSIS #########################################################################
+########################################################################################
+
+.kurt <- function(x) {
+  
+  result <- mean((x-mean(x))^4)/sd(x)^4
+  return(result)
+  
+}
+
+########################################################################################
+##### JARQUE-BERA TEST #################################################################
+########################################################################################
+
+jb.test <- function(x, k = 0) {
+  
+  x <- na.exclude(x)
+  s <- .skew(x)
+  c <- .kurt(x)
+  n <- length(x)
+  
+  jb <- ((n-k+1)/6) * (s^2 + 0.25 * (c-3)^2)
+  return(jb)
+}
