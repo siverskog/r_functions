@@ -182,7 +182,7 @@ sign <- function(x, digits = 2, only.stars = FALSE) {
     result <- paste(stat, sep = "")
   }
   
-  names(result) <- x$name
+  #names(result) <- x$name
   
   return(result)
   
