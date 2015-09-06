@@ -223,6 +223,12 @@ plot.copula <- function(c = NULL, bc, ec = NULL, mfrow, w = 200, h = 200, print 
   
   for(i in 1:ncol(bc$mu)) {
     
+    neg.grid <- bc$grid[1:ceiling(length(bc$grid)/2)]
+    pos.grid <- bc$grid[ceiling(length(bc$grid)/2):length(bc$grid)]
+    
+    neg <- 1:(nrow(bc$mu)/2)
+    pos <- (nrow(bc$mu)/2 + 1):nrow(bc$mu)
+    
     hi.neg <- bc$mu[neg,i]+1.96*bc$sd[neg,i]
     lo.neg <- bc$mu[neg,i]-1.96*bc$sd[neg,i]
     hi.pos <- bc$mu[pos,i]+1.96*bc$sd[pos,i]
