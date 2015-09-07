@@ -127,13 +127,14 @@ copula <- function(data, x, y, bw, bwtype = "adaptive_nn", grid = seq(-2,2,0.1),
 
 boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed", bw, bwtype = "adaptive_nn") {
   
-  assign("boot.num", 0, envir = globalenv())
+  #assign("boot.num", 0, envir = globalenv())
   
   ### FUNCTION TO PASS THROUGH BOOTSTRAP ###
   
   func <- function(data, x, y, grid, bw, bwtype) {
-    assign("boot.num", boot.num+1, envir = globalenv())
-    print(paste("STRAPPIN DEM BOOTS", boot.num, "OF", rep, sep = " "))
+    #assign("boot.num", boot.num+1, envir = globalenv())
+    #print(paste("STRAPPIN DEM BOOTS", boot.num, "OF", rep, sep = " "))
+    print(paste("STRAPPIN DEM BOOTS"))
     res <- garch.filter(data)
     result <- copula(data = res, x = x, y = y, bw = bw, grid = grid)
     return(result)
