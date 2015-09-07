@@ -151,7 +151,9 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
                y = y,
                grid = grid,
                bw = bw,
-               bwtype = bwtype)
+               bwtype = bwtype,
+               parallel = "snow",
+               ncpus = detectCores())
   
   mu <- as.data.frame(matrix(apply(bc$t, 2, mean), ncol = length(bw), nrow = ceiling(length(grid)/2)*2, dimnames = list(NULL, paste(colnames(data)[x], colnames(data)[y], sep = "."))))
   sd <- as.data.frame(matrix(apply(bc$t, 2, sd), ncol = length(bw), nrow = ceiling(length(grid)/2)*2, dimnames = list(NULL, paste(colnames(data)[x], colnames(data)[y], sep = "."))))
