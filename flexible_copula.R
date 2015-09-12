@@ -15,41 +15,126 @@ install <- function(packages) {
   warnings()
 }
 
-packages <- c("np", "boot", "copula", "rugarch", "fGarch")
+packages <- c("np", "boot", "copula", "rugarch", "fGarch", "foreach", "doParallel")
 
 install(packages)
+
+source("https://raw.githubusercontent.com/siverskog/r_functions/master/diagnostics.R")
+
+########################################################################################
+##### SELECT BEST GARCH-SPECIFICATION ##################################################
+########################################################################################
+
+garch.spec <- function(data, ar.order = 0:4, garch.model = c("sGARCH", "eGARCH", "gjrGARCH"), error.dist = c("norm", "std", "ged"), q.lag = 10, signif.lvl = 0.05) {
+  
+  ##### SETUP LIST ALL SPECIFICATIONS #####
+  
+  X <- list()
+  count <- 0
+  
+  for(n in 1:ncol(data)) {
+    for(i in 1:length(garch.model)) {
+      for(j in 1:length(ar.order)) {
+        for(k in 1:length(error.dist)) {
+          count <- count+1
+          X[[count]] <- c(n, garch.model[i], ar.order[j], error.dist[k])
+        }
+      }
+    }
+  }
+  
+  X <- do.call(rbind, X)
+  
+  ##### FUNCTION TO RUN THROUGH FOREACH LOOP #####
+  
+  garch.test <- function(X, i) {
+    
+    spec <- ugarchspec(variance.model = list(model = X[i,2], garchOrder = c(1,1)),
+                       mean.model = list(armaOrder= c(as.numeric(X[i,3]), 0)),
+                       distribution.model = X[i,4])
+    
+    fit <- ugarchfit(spec, data[,as.numeric(X[i,1])], solver = "hybrid")
+    resid <- fit@fit$residuals/fit@fit$sigma
+    
+    q <- Box.test(resid, type = "Ljung-Box", lag = q.lag, fitdf = as.numeric(X[i,3]))$p.value
+    q2 <- Box.test(resid^2, type = "Ljung-Box", lag = q.lag, fitdf = as.numeric(X[i,3]))$p.value
+    llh <- fit@fit$LLH
+    
+    return(c(q, q2, llh))
+    
+  }
+  
+  ##### FOREACH LOOP #####
+  
+  print("SETTING UP CLUSTER...")
+  cluster <- makeCluster(detectCores()-1)
+  registerDoParallel(cluster)
+  
+  print("ESTIMATING ALL MODELS. THIS MAY TAKE SOME TIME...")
+  test <- foreach(i = 1:nrow(X), .packages = c("rugarch", "stats")) %dopar% {
+    
+    garch.test(X = X, i = i)
+    
+  }
+  
+  stopCluster(cluster)
+  test <- do.call(rbind, test)
+  
+  ##### SELECT BEST MODEL #####
+  
+  best <- as.data.frame(matrix(NA, ncol = 3, nrow = ncol(data)))
+  colnames(best) <- c("Model", "AR", "ErrorDist")
+  
+  for(i in 1:ncol(data)) {
+    
+    good <- X[,1]==i & test[,1]>=signif.lvl & test[,2]>=signif.lvl
+    
+    if(all(!good)) next
+    
+    best[i,] <- X[test[,3]==max(test[good,3]),-1]
+    
+  }
+  
+  return(best)
+  
+}
 
 ########################################################################################
 ##### APPLY AR-GARCH-FILTER TO DATA ####################################################
 ########################################################################################
 
-garch.filter <- function(x, type = "sGARCH", garch = c(1,1), arma = c(1,0), package = "fGarch") {
+garch.filter <- function(x, spec) {
   
-  if(package=="rugarch") {
-    
-    spec <- ugarchspec(variance.model = list(model = type, garchOrder = garch), mean.model = list(armaOrder= arma))
+  if(class(spec)=="uGARCHspec") {
     
     if(is.vector(x)) {
       fit <- ugarchfit(spec, x)
-      res <- fit@fit$residuals/fit@fit$sigma
+      if(fit@fit$convergence==0) {
+        res <- fit@fit$residuals/fit@fit$sigma
+      } else {
+        res <- x/sd(x)
+      }
+      
     } else {
       res <- list()
       for(i in 1:ncol(x)) {
         fit <- ugarchfit(spec, x[,i])
-        res[[i]] <- residuals(fit)/sigma(fit)
+        if(fit@fit$convergence==0) {
+          res[[i]] <- residuals(fit)/sigma(fit)
+        } else {
+          res[[i]] <- x[,i]/sd(x[,i])
+        }
       }
     }
   } else {
     
-    form <- as.formula(paste("~", "arma", "(", arma[1], ",", arma[2], ")", "+", "garch", "(", garch[1], ",", garch[2], ")", sep = ""))
-    
     if(is.vector(x)) {
-      fit <- garchFit(formula = form, data = x, trace = FALSE)
+      fit <- garchFit(formula = spec, data = x, trace = FALSE)
       res <- fit@residuals/fit@sigma.t
     } else {
       res <- list()
       for(i in 1:ncol(x)) {
-        fit <- garchFit(formula = form, data = x[,i], trace = FALSE)
+        fit <- garchFit(formula = spec, data = x[,i], trace = FALSE)
         res[[i]] <- fit@residuals/fit@sigma.t
       }
     }
@@ -64,6 +149,53 @@ garch.filter <- function(x, type = "sGARCH", garch = c(1,1), arma = c(1,0), pack
   }
   
   return(res)
+  
+}
+
+########################################################################################
+##### DESCRIPTIVE STATISTICS ###########################################################
+########################################################################################
+
+desc.stat <- function(df, dec = 2, dlog = TRUE, obsperyear = 260, only.stars = TRUE) {
+  
+  result <- as.data.frame(matrix(NA, nrow = ncol(df), ncol = 9))
+  colnames(result) <- c("Obs", "Mean", "StdDev", "Skewness", "Kurtosis", "JB", "Q(10)", "$Q^2$(10)", "ARCH(10)")
+  
+  for(i in 1:ncol(df)) {
+    
+    x <- as.numeric(na.exclude(df[,i]))
+    
+    if(length(x)>50) {
+      result[i,"Obs"] <- format(round(length(x), 0), nsmall = 0)
+      result[i,"Skewness"] <- format(round(.skew(x), dec), nsmall = dec)
+      result[i,"Kurtosis"] <- format(round(.kurt(x), dec), nsmall = dec)
+      
+      result[i,"JB"] <- sign(jb.test(x), digits = dec, only.stars = only.stars)
+      result[i,"Q(10)"] <- sign(q.test(x, lag = 10), digits = dec, only.stars = only.stars)
+      result[i,"$Q^2$(10)"] <- sign(q.test(x, lag = 10, sq = TRUE), digits = dec, only.stars = only.stars)
+      result[i,"ARCH(10)"] <- sign(arch.test(x, lag = 10), digits = dec, only.stars = only.stars)
+    } else {
+      result[i,] <- rep(NA, ncol(result))
+      result[i,"Obs"] <- 0
+    }
+    
+    if(dlog) {
+      result[i,"Mean"] <- format(round(mean(x)*obsperyear*100, dec), nsmall = dec)
+      result[i,"StdDev"] <- format(round(sd(x)*sqrt(obsperyear)*100, dec), nsmall = dec)
+    } else{
+      result[i,"Mean"] <- format(round(mean(x), dec), nsmall = dec)
+      result[i,"StdDev"] <- format(round(sd(x), dec), nsmall = dec)
+    }
+    
+  }
+  
+  
+  
+  if(dlog) {rownames(df)[2:3] <- c("Mean (%)", "StdDev (%)")}
+  
+  rownames(result) <- colnames(df)
+  
+  return(result)
   
 }
 
@@ -89,7 +221,7 @@ compute.bandwidth <- function(data, x, y, ckertype = "gaussian", nmulti = 30, bw
 ##### COPULA FUNCTION ##################################################################
 ########################################################################################
 
-copula <- function(data, x, y, bw, bwtype = "adaptive_nn", grid = seq(-2,2,0.1), as.vector = TRUE) {
+nonparametric.copula <- function(data, x, y, bw, bwtype = "adaptive_nn", grid = seq(-2,2,0.1), as.vector = TRUE) {
   
   prob <- list()
   
@@ -125,22 +257,28 @@ copula <- function(data, x, y, bw, bwtype = "adaptive_nn", grid = seq(-2,2,0.1),
 ##### BOOTSTRAP ########################################################################
 ########################################################################################
 
-boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed", bw, bwtype = "adaptive_nn") {
-  
-  #assign("boot.num", 0, envir = globalenv())
+boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed", bw, bwtype = "adaptive_nn", garchSpec) {
   
   ### FUNCTION TO PASS THROUGH BOOTSTRAP ###
   
-  func <- function(data, x, y, grid, bw, bwtype) {
-    #assign("boot.num", boot.num+1, envir = globalenv())
-    #print(paste("STRAPPIN DEM BOOTS", boot.num, "OF", rep, sep = " "))
-    print(paste("STRAPPIN DEM BOOTS"))
-    res <- garch.filter(data)
-    result <- copula(data = res, x = x, y = y, bw = bw, grid = grid)
+  func <- function(data, x, y, grid, bw, bwtype, garchSpec) {
+    res <- garch.filter(x = data, spec = garchSpec)
+    result <- nonparametric.copula(data = res, x = x, y = y, bw = bw, bwtype = bwtype, grid = grid)
     return(result)
   }
   
   ### BOOTSTRAP ###
+  
+  print("CREATING CLUSTER...")
+  cluster <- makeCluster(detectCores()-1)
+  clusterExport(cluster, varlist = list("data", "func", "rep", "block.size", "sim", "x", "y", "grid", "bw", "bwtype", "garchSpec"), envir = environment())
+  clusterExport(cluster, varlist = list("garch.filter", "nonparametric.copula"))
+  
+  clusterCall(cluster, function() library(np))
+  clusterCall(cluster, function() library(rugarch))
+  clusterCall(cluster, function() library(fGarch))
+
+  print("STARTING BOOTSTRAP...")
   
   bc <- tsboot(data,
                func,
@@ -153,26 +291,18 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
                grid = grid,
                bw = bw,
                bwtype = bwtype,
+               garchSpec = garchSpec,
                parallel = "snow",
-               ncpus = detectCores())
+               ncpus = detectCores()-1,
+               cl = cluster)
+  
+  print("BOOTSTRAP FINISHED")
+  stopCluster(cluster)
   
   mu <- as.data.frame(matrix(apply(bc$t, 2, mean), ncol = length(bw), nrow = ceiling(length(grid)/2)*2, dimnames = list(NULL, paste(colnames(data)[x], colnames(data)[y], sep = "."))))
   sd <- as.data.frame(matrix(apply(bc$t, 2, sd), ncol = length(bw), nrow = ceiling(length(grid)/2)*2, dimnames = list(NULL, paste(colnames(data)[x], colnames(data)[y], sep = "."))))
   
   return(list(mu = mu, sd = sd, grid = grid))
-  
-}
-
-########################################################################################
-##### WRAP FUNCTION ####################################################################
-########################################################################################
-
-copula.function <- function(data, x, y, grid, bwtype = "adaptive_nn", ckertype = "gaussian", nmulti = 5, rep = 5, sim = "fixed", block.size = 20) {
-  
-  res <- garch.filter(data)
-  bw <- compute.bandwidth(res, x, y, ckertype, nmulti, bwtype)
-  bc <- boot.copula(data, x, y, grid, rep, block.size, sim, bw)
-  return(bc)
   
 }
 
@@ -186,7 +316,8 @@ empirical.copula <- function(data, x, y, grid) {
   
   for(i in 1:length(x)) {
     
-    res <- garch.filter(data)
+    #res <- garch.filter(data)
+    res <- data
     ucdf.x <- ecdf(res[,x[i]])
     ucdf.y <- ecdf(res[,y[i]])
     ux <- ucdf.x(grid)
@@ -212,7 +343,7 @@ empirical.copula <- function(data, x, y, grid) {
 ##### PLOT #############################################################################
 ########################################################################################
 
-plot.copula <- function(c = NULL, bc, ec = NULL, mfrow, w = 200, h = 200, print = FALSE, file = "copula.png") {
+plot.copula <- function(c = NULL, bc, ec = NULL, extra = NULL, mfrow, w = 200, h = 200, print = FALSE, file = "copula.png") {
   
   if(print) png(filename = file, width = w, height = h, units = "mm", res = 600)
   par(mfrow = mfrow, mar = c(2,3,2,1))
@@ -237,9 +368,18 @@ plot.copula <- function(c = NULL, bc, ec = NULL, mfrow, w = 200, h = 200, print 
     hi.pos <- bc$mu[pos,i]+1.96*bc$sd[pos,i]
     lo.pos <- bc$mu[pos,i]-1.96*bc$sd[pos,i]
     
+    #plot(NULL,
+    #     xlim = c(bc$grid[1], bc$grid[length(bc$grid)]),
+    #     ylim = c(min(lo.pos, lo.neg), max(hi.pos, hi.neg)),
+    #     xlab = NA,
+    #     ylab = NA,
+    #     main = colnames(bc$mu)[i],
+    #     las = 1,
+    #     xaxt = "n")
+    
     plot(NULL,
          xlim = c(bc$grid[1], bc$grid[length(bc$grid)]),
-         ylim = c(min(lo.pos, lo.neg), max(hi.pos, hi.neg)),
+         ylim = c(0, 1),
          xlab = NA,
          ylab = NA,
          main = colnames(bc$mu)[i],
@@ -247,14 +387,20 @@ plot.copula <- function(c = NULL, bc, ec = NULL, mfrow, w = 200, h = 200, print 
     
     polygon(c(neg.grid, rev(neg.grid)),c(lo.neg, rev(hi.neg)),col="lightgray",border=FALSE)
     polygon(c(rev(pos.grid), pos.grid),c(rev(hi.pos), lo.pos),col="lightgray",border=FALSE)
-    points(neg.grid, bc$mu[neg,i], type = "l", lwd = 2)
-    points(pos.grid, bc$mu[pos,i], type = "l", lwd = 2)
+    points(neg.grid, bc$mu[neg,i], type = "l", lwd = 2, col = "red")
+    points(pos.grid, bc$mu[pos,i], type = "l", lwd = 2, col = "red")
     abline(v=0)
+    box()
     
     if(!is.null(ec)) {
-      points(neg.grid, ec$prob[neg,i], pch = "+", type = "b", lty = 3)
-      points(pos.grid, ec$prob[pos,i], pch = "+", type = "b", lty = 3) 
+      points(neg.grid, ec$prob[neg,i], pch = "+")
+      points(pos.grid, ec$prob[pos,i], pch = "+") 
     }
+    
+    if(!is.null(extra)) {
+      points(rownames(extra), extra[,i], type = "l", col = "blue", lwd = 2)
+    }
+    
   }
   
   if(print) dev.off()
