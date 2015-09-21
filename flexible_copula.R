@@ -21,8 +21,6 @@ install(packages)
 
 source("https://raw.githubusercontent.com/siverskog/r_functions/master/diagnostics.R")
 
-<<<<<<< HEAD
-=======
 ########################################################################################
 ##### SELECT BEST GARCH-SPECIFICATION ##################################################
 ########################################################################################
@@ -77,90 +75,6 @@ garch.spec <- function(data, ar.order = 0:4, garch.model = c("sGARCH", "eGARCH",
     
     garch.test(X = X, i = i)
     
-  }
-  
-  stopCluster(cluster)
-  test <- do.call(rbind, test)
-  
-  ##### SELECT BEST MODEL #####
-  
-  best <- as.data.frame(matrix(NA, ncol = 3, nrow = ncol(data)))
-  colnames(best) <- c("Model", "AR", "ErrorDist")
-  
-  for(i in 1:ncol(data)) {
-    
-    good <- X[,1]==i & test[,1]>=signif.lvl & test[,2]>=signif.lvl
-    
-    if(all(!good)) next
-    
-    best[i,] <- X[test[,3]==max(test[good,3]),-1]
-    
-  }
-  
-  return(best)
-  
-}
-
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
-########################################################################################
-##### SELECT BEST GARCH-SPECIFICATION ##################################################
-########################################################################################
-
-<<<<<<< HEAD
-garch.spec <- function(data, ar.order = 0:4, garch.model = c("sGARCH", "eGARCH", "gjrGARCH"), error.dist = c("norm", "std", "ged"), q.lag = 10, signif.lvl = 0.05) {
-  
-  ##### SETUP LIST ALL SPECIFICATIONS #####
-  
-  X <- list()
-  count <- 0
-  
-  for(n in 1:ncol(data)) {
-    for(i in 1:length(garch.model)) {
-      for(j in 1:length(ar.order)) {
-        for(k in 1:length(error.dist)) {
-          count <- count+1
-          X[[count]] <- c(n, garch.model[i], ar.order[j], error.dist[k])
-        }
-      }
-    }
-  }
-  
-  X <- do.call(rbind, X)
-  
-  ##### FUNCTION TO RUN THROUGH FOREACH LOOP #####
-=======
-garch.filter <- function(x, type, error.dist, garch, arma, package) {
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
-  
-  garch.test <- function(X, i) {
-    
-    spec <- ugarchspec(variance.model = list(model = X[i,2], garchOrder = c(1,1)),
-                       mean.model = list(armaOrder= c(as.numeric(X[i,3]), 0)),
-                       distribution.model = X[i,4])
-    
-    fit <- ugarchfit(spec, data[,as.numeric(X[i,1])], solver = "hybrid")
-    resid <- fit@fit$residuals/fit@fit$sigma
-    
-    q <- Box.test(resid, type = "Ljung-Box", lag = q.lag, fitdf = as.numeric(X[i,3]))$p.value
-    q2 <- Box.test(resid^2, type = "Ljung-Box", lag = q.lag, fitdf = as.numeric(X[i,3]))$p.value
-    llh <- fit@fit$LLH
-    
-    return(c(q, q2, llh))
-    
-  }
-  
-  ##### FOREACH LOOP #####
-  
-  print("SETTING UP CLUSTER...")
-  cluster <- makeCluster(detectCores()-1)
-  registerDoParallel(cluster)
-  
-  print("ESTIMATING ALL MODELS. THIS MAY TAKE SOME TIME...")
-  test <- foreach(i = 1:nrow(X), .packages = c("rugarch", "stats")) %dopar% {
-    
-    garch.test(X = X, i = i)
-    
-<<<<<<< HEAD
   }
   
   stopCluster(cluster)
@@ -192,11 +106,6 @@ garch.filter <- function(x, type, error.dist, garch, arma, package) {
 garch.filter <- function(x, spec) {
   
   if(class(spec)=="uGARCHspec") {
-=======
-    spec <- ugarchspec(variance.model = list(model = type, garchOrder = garch),
-                       mean.model = list(armaOrder= arma),
-                       distribution.model = error.dist)
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
     
     if(is.vector(x)) {
       fit <- ugarchfit(spec, x)
@@ -348,7 +257,6 @@ nonparametric.copula <- function(data, x, y, bw, bwtype = "adaptive_nn", grid = 
 ##### BOOTSTRAP ########################################################################
 ########################################################################################
 
-<<<<<<< HEAD
 boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed", bw, bwtype = "adaptive_nn", garchSpec) {
   
   ### FUNCTION TO PASS THROUGH BOOTSTRAP ###
@@ -356,22 +264,6 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
   func <- function(data, x, y, grid, bw, bwtype, garchSpec) {
     res <- garch.filter(x = data, spec = garchSpec)
     result <- nonparametric.copula(data = res, x = x, y = y, bw = bw, bwtype = bwtype, grid = grid)
-=======
-boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed", bw, bwtype = "adaptive_nn", ...) {
-  
-  env <- environment()
-  #count <- 0
-  #pb <- winProgressBar(title = "Initializing", min = 0, max = rep, width = 300)
-  
-  ### FUNCTION TO PASS THROUGH BOOTSTRAP ###
-  
-  func <- function(data, x, y, grid, bw, bwtype) {
-    #curVal <- get("count", envir = env) + detectCores()-1
-    #assign("count", curVal, envir = env)
-    #setWinProgressBar(get("pb", envir = env), curVal, title = paste("Bootstrap:", round(curVal/rep*100, 0), "% done"))
-    res <- garch.filter(data, ...)
-    result <- nonparametric.copula(data = res, x = x, y = y, bw = bw, grid = grid)
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
     return(result)
   }
   
@@ -379,11 +271,7 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
   
   print("CREATING CLUSTER...")
   cluster <- makeCluster(detectCores()-1)
-<<<<<<< HEAD
   clusterExport(cluster, varlist = list("data", "func", "rep", "block.size", "sim", "x", "y", "grid", "bw", "bwtype", "garchSpec"), envir = environment())
-=======
-  clusterExport(cluster, varlist = list("env", "data", "func", "rep", "block.size", "sim", "x", "y", "grid", "bw", "bwtype"), envir = environment())
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
   clusterExport(cluster, varlist = list("garch.filter", "nonparametric.copula"))
   
   clusterCall(cluster, function() library(np))
@@ -391,11 +279,7 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
   clusterCall(cluster, function() library(fGarch))
 
   print("STARTING BOOTSTRAP...")
-<<<<<<< HEAD
   
-=======
-
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
   bc <- tsboot(data,
                func,
                R = rep-1,
@@ -412,10 +296,7 @@ boot.copula <- function(data, x, y, grid, rep = 5, block.size = 20, sim = "fixed
                ncpus = detectCores()-1,
                cl = cluster)
   
-<<<<<<< HEAD
   print("BOOTSTRAP FINISHED")
-=======
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
   stopCluster(cluster)
   
   mu <- as.data.frame(matrix(apply(bc$t, 2, mean), ncol = length(bw), nrow = ceiling(length(grid)/2)*2, dimnames = list(NULL, paste(colnames(data)[x], colnames(data)[y], sep = "."))))
@@ -514,13 +395,10 @@ plot.copula <- function(c = NULL, bc, ec = NULL, extra = NULL, mfrow, w = 200, h
     if(!is.null(ec)) {
       points(neg.grid, ec$prob[neg,i], pch = "+")
       points(pos.grid, ec$prob[pos,i], pch = "+") 
-<<<<<<< HEAD
     }
     
     if(!is.null(extra)) {
       points(rownames(extra), extra[,i], type = "l", col = "blue", lwd = 2)
-=======
->>>>>>> 3ea650f88607072a0c940063d8015a4b1840305b
     }
     
   }
